@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Vision AI Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Thư viện Firebase cho Firestore và Authentication -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, setDoc, doc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Khai báo biến toàn cục (sẽ được gán trong window)
+        window.firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        window.__app_id = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        window.__initial_auth_token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : undefined;
+
+        if (Object.keys(window.firebaseConfig).length > 0) {
+            window.app = initializeApp(window.firebaseConfig);
+            window.db = getFirestore(window.app);
+            window.auth = getAuth(window.app);
+            setLogLevel('Debug');
+
+            // Hàm xác thực
+            const authenticate = async () => {
+                try {
+                    if (window.__initial_auth_token) {
+                        await signInWithCustomToken(window.auth, window.__initial_auth_token);
+                    } else {
+                        await signInAnonymously(window.auth);
+                    }
+                } catch (error) {
+                    console.error("Firebase Auth Error:", error);
+                    document.getElementById('status-message').textContent = 'Lỗi xác thực Firebase: ' + error.message;
+                }
+            };
+
+            // Đăng nhập ngay khi ứng dụng tải
+            authenticate();
+
+            // Lắng nghe trạng thái xác thực để lấy userId
+            onAuthStateChanged(window.auth, (user) => {
+                if (user) {
+                    window.userId = user.uid;
+                    document.getElementById('status-message').textContent = `Đã kết nối. User ID: ${window.userId}`;
+                } else {
+                    window.userId = crypto.randomUUID(); // Dùng ID ngẫu nhiên nếu ẩn danh
+                }
+            });
+        } else {
+            document.getElementById('status-message').textContent = 'Cảnh báo: Không tìm thấy cấu hình Firebase. Ứng dụng sẽ chạy ở chế độ mô phỏng.';
+        }
+    </script>
+    <style>
+        /* Custom CSS cho giao diện */
+        .container-wrapper {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background-color: #0d1117;
+            color: #c9d1d9;
+            padding: 1rem;
+        }
+        .main-card {
+            background-color: #161b22;
+            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.5);
+            max-width: 600px;
+            width: 100%;
+        }
+        .action-button {
+            transition: all 0.2s;
+        }
+        .action-button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 4px rgba(66, 153, 225, 0.6);
+        }
+        /* Ẩn phần tử không cần thiết trên giao diện */
+        #screen-video, #screen-canvas {
+            display: none;
+        }
+        .loading-animation {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid #4299e1;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="font-sans">
+
+    <div class="container-wrapper">
+        <div class="main-card p-6 rounded-xl border border-gray-700">
+            <h1 class="text-3xl font-bold mb-4 text-blue-400 text-center">🤖 Trợ Lý Tự Động Vision AI</h1>
+            <p id="status-message" class="text-sm text-gray-500 mb-4 text-center">Đang khởi tạo...</p>
+            
+            <!-- Phần điều khiển -->
+            <div class="flex flex-col space-y-3 mb-6">
+                <button id="start-btn" onclick="startCapture()" 
+                        class="action-button bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50">
+                    Bắt Đầu Chia Sẻ Màn Hình
+                </button>
+                <button id="stop-btn" onclick="stopCapture()" disabled
+                        class="action-button bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-6 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                    Dừng Chia Sẻ
+                </button>
+            </div>
+            
+            <div class="mb-4 p-4 bg-gray-800 rounded-lg text-sm border border-gray-700">
+                <p class="text-gray-400 font-medium">Hướng dẫn:</p>
+                <ol class="list-decimal list-inside ml-2 text-gray-500">
+                    <li>Nhấn "Bắt Đầu" và chọn cửa sổ/tab bạn muốn AI phân tích.</li>
+                    <li>Ứng dụng sẽ chụp ảnh màn hình đó mỗi 2 giây.</li>
+                    <li>AI sẽ tự động tìm và trả lời bất kỳ câu hỏi nào nó nhìn thấy.</li>
+                </ol>
+            </div>
+
+            <!-- Khu vực Hiển thị Kết quả AI -->
+            <div class="mt-6">
+                <h2 class="text-xl font-semibold mb-3 text-white flex items-center">
+                    <span id="ai-status-icon" class="mr-2 text-yellow-400">👀</span>
+                    Đáp Án Tự Động
+                </h2>
+                <div id="loading-indicator" class="hidden flex items-center text-blue-400 mb-2">
+                    <div class="loading-animation mr-2"></div>
+                    Đang gửi ảnh và chờ phản hồi AI...
+                </div>
+                <div id="ai-response-display" class="p-4 bg-gray-700 rounded-lg border-l-4 border-blue-500 min-h-[100px] whitespace-pre-wrap">
+                    <p class="text-gray-400 italic">Kết quả sẽ hiện ở đây khi AI phát hiện câu hỏi.</p>
+                </div>
+                <p id="last-processed" class="text-xs text-gray-500 mt-2 text-right">Lần xử lý gần nhất: Chưa có</p>
+            </div>
+            
+            <!-- Phần tử ẩn để xử lý video/hình ảnh -->
+            <video id="screen-video" autoplay></video>
+            <canvas id="screen-canvas"></canvas>
+        </div>
+    </div>
+
+    <script type="module">
+        const apiKey = ""; // API key sẽ được cung cấp tự động bởi Canvas
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+        let mediaStream = null;
+        let captureInterval = null;
+        let isProcessing = false;
+        const CAPTURE_INTERVAL_MS = 2000; // Chụp ảnh mỗi 2 giây
+
+        const video = document.getElementById('screen-video');
+        const canvas = document.getElementById('screen-canvas');
+        const ctx = canvas.getContext('2d');
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const responseDisplay = document.getElementById('ai-response-display');
+        const loadingIndicator = document.getElementById('loading-indicator');
+        const lastProcessedText = document.getElementById('last-processed');
+        const statusIcon = document.getElementById('ai-status-icon');
+
+        /**
+         * @function startCapture
+         * Bắt đầu quá trình chia sẻ và xử lý màn hình.
+         */
+        window.startCapture = async function() {
+            try {
+                // Yêu cầu quyền truy cập màn hình/cửa sổ/tab
+                mediaStream = await navigator.mediaDevices.getDisplayMedia({
+                    video: true
+                });
+
+                if (mediaStream) {
+                    video.srcObject = mediaStream;
+                    startBtn.disabled = true;
+                    stopBtn.disabled = false;
+                    responseDisplay.innerHTML = '<p class="text-gray-400 italic">Đã bắt đầu chia sẻ. Đang chờ AI quét màn hình...</p>';
+                    statusIcon.textContent = '🟢';
+                    
+                    // Thiết lập kích thước canvas dựa trên luồng video
+                    video.onloadedmetadata = () => {
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        // Bắt đầu vòng lặp chụp và xử lý
+                        captureInterval = setInterval(captureAndProcess, CAPTURE_INTERVAL_MS);
+                    };
+                }
+            } catch (err) {
+                console.error("Error starting media capture:", err);
+                responseDisplay.innerHTML = `<p class="text-red-400">Lỗi khi bắt đầu chia sẻ: ${err.name}. Vui lòng cấp quyền hoặc thử lại.</p>`;
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                statusIcon.textContent = '❌';
+            }
+        }
+
+        /**
+         * @function stopCapture
+         * Dừng quá trình chia sẻ và xử lý màn hình.
+         */
+        window.stopCapture = function() {
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+            if (captureInterval) {
+                clearInterval(captureInterval);
+                captureInterval = null;
+            }
+            isProcessing = false;
+            startBtn.disabled = false;
+            stopBtn.disabled = true;
+            loadingIndicator.classList.add('hidden');
+            responseDisplay.innerHTML = '<p class="text-gray-400 italic">Đã dừng chia sẻ. Nhấn "Bắt Đầu" để tiếp tục.</p>';
+            statusIcon.textContent = '👀';
+        }
+
+        /**
+         * @function captureAndProcess
+         * Chụp một khung hình từ video, chuyển thành Base64 và gọi API Gemini.
+         */
+        async function captureAndProcess() {
+            if (isProcessing) {
+                // Bỏ qua nếu khung hình trước đó vẫn đang được xử lý
+                console.log("Skipping frame: previous request is still pending.");
+                return;
+            }
+
+            if (video.readyState < video.HAVE_CURRENT_DATA) {
+                 // Đảm bảo video đã có dữ liệu để vẽ
+                console.log("Video not ready yet.");
+                return;
+            }
+
+            isProcessing = true;
+            loadingIndicator.classList.remove('hidden');
+            statusIcon.textContent = '🔄';
+
+            try {
+                // 1. Vẽ khung hình video lên canvas
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+                // 2. Chuyển canvas sang Base64 data URL
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.8); // Dùng JPEG để giảm kích thước
+                const base64Data = dataUrl.split(',')[1];
+                
+                // 3. Gọi API Gemini
+                const result = await callGeminiVisionAPI(base64Data);
+                
+                const now = new Date().toLocaleTimeString('vi-VN');
+                lastProcessedText.textContent = `Lần xử lý gần nhất: ${now}`;
+
+                // 4. Cập nhật giao diện
+                if (result && result.trim() !== 'NO_QUESTION') {
+                    responseDisplay.innerHTML = `<span class="font-bold text-blue-300">AI DETECTED & ANSWERED:</span><br>${result}`;
+                } else {
+                    // Nếu không có câu hỏi, giữ nguyên đáp án cũ nhưng thông báo quét thành công
+                    responseDisplay.innerHTML += ''; // Không làm gì nếu không có câu hỏi mới
+                }
+                statusIcon.textContent = '🟢';
+
+            } catch (error) {
+                console.error("Error during capture or AI call:", error);
+                responseDisplay.innerHTML = `<p class="text-red-400">Lỗi xử lý AI: ${error.message}</p>`;
+                statusIcon.textContent = '⚠️';
+            } finally {
+                isProcessing = false;
+                loadingIndicator.classList.add('hidden');
+            }
+        }
+
+        /**
+         * @function callGeminiVisionAPI
+         * Gửi hình ảnh và prompt đến API Gemini.
+         * @param {string} base64ImageData - Dữ liệu hình ảnh Base64.
+         * @returns {Promise<string>} - Văn bản phản hồi từ AI.
+         */
+        async function callGeminiVisionAPI(base64ImageData) {
+            const systemPrompt = "Bạn là một trợ lý AI thông minh, hoạt động tự động và không lời. Nhiệm vụ của bạn là phân tích hình ảnh màn hình. Nếu bạn phát hiện bất kỳ câu hỏi, thuật ngữ kỹ thuật, hoặc khái niệm nào cần giải thích trong hình ảnh, hãy cung cấp một câu trả lời hoặc giải thích NGẮN GỌN, TRỰC TIẾP và bằng TIẾNG VIỆT. Nếu không tìm thấy bất kỳ câu hỏi hoặc khái niệm đáng chú ý nào, bạn PHẢI chỉ trả lời DUY NHẤT một chuỗi ký tự 'NO_QUESTION'.";
+            const userQuery = "Phân tích nội dung màn hình này và tự động trả lời bất kỳ câu hỏi nào được hiển thị hoặc giải thích các khái niệm quan trọng.";
+
+            const payload = {
+                contents: [
+                    {
+                        role: "user",
+                        parts: [
+                            { text: userQuery },
+                            {
+                                inlineData: {
+                                    mimeType: "image/jpeg",
+                                    data: base64ImageData
+                                }
+                            }
+                        ]
+                    }
+                ],
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }]
+                }
+            };
+
+            // Sử dụng cơ chế Retry (Lặp lại) với Backoff để xử lý lỗi mạng/API tạm thời
+            const MAX_RETRIES = 3;
+            let lastError = null;
+
+            for (let i = 0; i < MAX_RETRIES; i++) {
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        const errorBody = await response.json();
+                        throw new Error(`HTTP error! status: ${response.status} - ${JSON.stringify(errorBody)}`);
+                    }
+
+                    const result = await response.json();
+                    const text = result?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                    return text.trim();
+
+                } catch (error) {
+                    lastError = error;
+                    console.warn(`Attempt ${i + 1} failed. Retrying in ${Math.pow(2, i)} seconds...`, error);
+                    if (i < MAX_RETRIES - 1) {
+                        await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+                    }
+                }
+            }
+
+            // Nếu tất cả các lần thử đều thất bại
+            throw new Error(`API call failed after ${MAX_RETRIES} attempts. Last error: ${lastError?.message || 'Unknown error'}`);
+        }
+        
+        // Nghe sự kiện khi người dùng dừng chia sẻ qua nút trình duyệt
+        if (video) {
+            video.addEventListener('ended', stopCapture);
+        }
+
+    </script>
+</body>
+</html>
